@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"syscall"
 
@@ -19,6 +20,18 @@ func main() {
 	}
 	cmdString := os.Args[1]
 	cmdArgs := os.Args[2:]
+
+	var cmd *exec.Cmd
+
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt)
+
+	go func() {
+		<-c
+		kill(cmd)
+		os.Exit(0)
+	}()
+
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		panic(err)
@@ -60,7 +73,7 @@ func main() {
 	}()
 
 	for {
-		cmd := exec.Command(cmdString, cmdArgs...)
+		cmd = exec.Command(cmdString, cmdArgs...)
 		// Start porcess in seperate process group, so that it can be killed seperatly
 		// in order to reclaim bound ports.
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -85,14 +98,20 @@ func main() {
 		<-refresh
 
 		// Get the procedss group id.
-		pqgid, err := syscall.Getpgid(cmd.Process.Pid)
-		if err != nil {
-			panic(err)
-		}
-		// Magic
-		if err := syscall.Kill(-pqgid, 15); err != nil {
+		if err := kill(cmd); err != nil {
 			panic(err)
 		}
 		fmt.Printf("\x1bc") //ANSI clear screen
 	}
+}
+
+func kill(cmd *exec.Cmd) error {
+	pqgid, err := syscall.Getpgid(cmd.Process.Pid)
+	if err != nil {
+		return err
+	}
+	if err := syscall.Kill(-pqgid, 15); err != nil {
+		return err
+	}
+	return nil
 }
